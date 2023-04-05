@@ -17,7 +17,7 @@ from oauth2client.client import GoogleCredentials
 
 BENEFICIARIES_XLSX = 'beneficiaries.xlsx'
 DEFAULT_START = {
-    'location': [-83.73750, 42.23545],
+    'location': [42.23545, -83.73750],
     'name': 'Ann Arbor Meals on Wheels',
 }
 DEFAULT_MAP = {
@@ -302,8 +302,8 @@ class Util:
         client = ors.Client(key=self.okey)
         vehicles = [
             opt.Vehicle(id=i, profile='driving-car',
-                        start=self.vehicle_start['location'],
-                        end=self.vehicle_start['location'],
+                        start=list(reversed(self.vehicle_start['location'])),
+                        end=list(reversed(self.vehicle_start['location'])),
                         time_window=[0, self.time_limit],
                         capacity=list(self.capacities.values())
                         )
@@ -315,43 +315,72 @@ class Util:
         if not self.valid:
             return
         optimized = client.optimization(jobs=jobs, vehicles=vehicles, geometry=True)
+        
+        if len(optimized['unassigned']) > 0:
+            print(red(f'Insufficient time or vehicles. '
+                      f'{len(optimized["unassigned"])} unserved beneficiaries.'))
+        for una in optimized['unassigned']:
+            row = df.loc[una['id']]
+            print(f'{row[self.nam_c]} at {row[self.adr_c]}')
+        if len(optimized['unassigned']) > 0:
+            print('\n')
+        
         colors = rainbow(self.num_vehicles)
-        m = folium.Map(**DEFAULT_START)
+        m = folium.Map(**DEFAULT_MAP)
         for i,route in enumerate(optimized['routes']):
             folium.PolyLine(locations=[
                 list(reversed(coord)) for coord in
                 ors.convert.decode_polyline(route['geometry'])['coordinates']],
-                color=colors[i]).add_to(m)
+                color=colors[i],
+                opacity=0.5).add_to(m)
+            
+            print(blue(f'Vehicle {i+1}'))
+            print(f'Total duration: '
+                  f'{yellow(hrs_mins_from_secs(route["duration"]+route["service"]))}')
+            
+            num_jobs = 0
             for step in route['steps']:
                 if not step['type'] == 'job':
                     continue
-                lat = round(float(step['location'][0]),PRECISION)
-                lon = round(float(step['location'][1]),PRECISION)
+                num_jobs += 1    
+            
+            print(f'Number of Deliveries: {num_jobs}')
+            print('Meals to Deliver:')
+            for meal_option,num_meal in zip(self.meal_options, route['amount']):
+                print(f'  {meal_option}: {num_meal}')
+            print('\nBeneficiaries:\n')
+            
+            for ndel, step in enumerate(route['steps']):
+                if not step['type'] == 'job':
+                    continue
+                lon = round(float(step['location'][0]),PRECISION)
+                lat = round(float(step['location'][1]),PRECISION)
                 arrival = int(step['arrival'])
                 mask = aeq(df.iloc[:,self.lat_c],lat) & \
-                    aeq(df.iloc[:,self.lon_c], lon)
-                row = df.loc[mask][0]
+                       aeq(df.iloc[:,self.lon_c],lon)
+                row = df.loc[mask].iloc[0]
                 name = row[self.nam_c]
                 addr = row[self.adr_c]
                 load = step['load']
+                time = hrs_mins_from_secs(arrival)
+                
+                print(green(f'  Delivery {ndel+1}: {name}'))
+                print(f'  {addr}')
+                print(f'  Arrive in {yellow(time)}')
+                
                 meals = ''
                 carry = ''
                 for mo,mc,lo in zip(self.meal_options, self.meal_options_c, load):
-                    meals += f'{mo}: {int(row[mc])}<br/>'
-                    carry += f'{mo}: lo<br/>'
-                
-                hrs = int(arrival//3600)
-                mins = int(arrival//60)
-                time = ''
-                if hrs > 0:
-                    time += f'{hrs} hr'
-                    time = f'{time}s ' if hrs > 1 else f'{time} '
-                if mins > 0:
-                    time += f'{mins} min'
-                    time = f'{time}s ' if mins > 1 else f'{time} '
+                    num_meal = int(row[mc])
+                    meals += f'{mo}: {num_meal}<br/>'
+                    carry += f'{mo}: {lo}<br/>'
+                    
+                    if num_meal > 0:
+                        print(f'    {mo}: {num_meal}')
+                print('')
                 
                 iframe = folium.IFrame(f'{STYLE}'
-                                       f'<h2>Vehicle {i}</h2>'
+                                       f'<h2>Vehicle {i+1}</h2>'
                                        f'<h3>{name}</h3>{addr}'
                                        f'<h3>Meals</h3>{meals}<br/>'
                                        f'Arrive in {time}<br/>'
@@ -362,7 +391,19 @@ class Util:
                 popup = folium.Popup(iframe, max_width=1000)
                 folium.Marker(location=[lat, lon],
                               popup=popup,
-                              icon=folium.Icon(color=colors[i])).add_to(m)
+                              icon=folium.Icon(color='black', icon_color=colors[i])).add_to(m)
+                s_iframe = folium.IFrame(f'{STYLE}'
+                                         f'<h3>Vehicle Start</h3>{self.vehicle_start["name"]}<br/>'
+                                         f'{self.vehicle_start["location"][0]} °N, '
+                                         f'{self.vehicle_start["location"][1]} °E',
+                                         width=300,
+                                         height=100)
+                folium.Marker(location=self.vehicle_start['location'],
+                              popup=folium.Popup(s_iframe, max_width=1000),
+                              icon=folium.Icon(color='black',
+                                               icon='home')).add_to(m)
+                
+            print('\n')
         return m
 
 
@@ -434,6 +475,19 @@ def string_similarity(test, *args):
     return sims
 
 
+def hrs_mins_from_secs(secs):
+    hrs = int(secs//3600)
+    mins = int((secs-hrs*3600)//60)
+    time = ''
+    if hrs > 0:
+        time += f'{hrs} hr'
+        time = f'{time}s ' if hrs > 1 else f'{time} '
+    if mins > 0:
+        time += f'{mins} min'
+        time = f'{time}s ' if mins > 1 else f'{time} '
+    return time
+
+
 def nominatim_extract_query(query):
     """Convert to /search route format."""
     if isinstance(query, str):
@@ -468,7 +522,7 @@ def rainbow(num):
     cols = []
     for hue in hues:
         r,g,b = colorsys.hsv_to_rgb(hue, 1, 1)
-        cols.append(f'#{r:x}{g:x}{b:x}')
+        cols.append(f'#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}')
     return cols
 
 def aeq(a,b):
