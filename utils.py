@@ -17,7 +17,7 @@ from oauth2client.client import GoogleCredentials
 
 BENEFICIARIES_XLSX = 'beneficiaries.xlsx'
 DEFAULT_START = {
-    'location': [42.23545,-83.73750],
+    'location': [-83.73750, 42.23545],
     'name': 'Ann Arbor Meals on Wheels',
 }
 DEFAULT_MAP = {
