@@ -35,10 +35,31 @@ html * {
 }
 h2 {
     margin-block-end: 0;
+    color: #DDDDDD;
 }
 h3 {
     margin-block-end: 0;
+    color: #DDDDDD;
 }
+body {
+    color: #DDDDDD;
+}
+html::-webkit-scrollbar {
+    width: 5px;
+}
+html::-webkit-scrollbar-track {
+    background: #101010;
+}
+html::-webkit-scrollbar-thumb {
+    background-color: #909090;
+}
+html::-webkit-scrollbar-thumb:hover {
+    background-color: #A0A0A0;
+}
+html::-webkit-scrollbar-thumb:active {
+    background-color: #B0B0B0;
+}
+
 </style></head>
 '''
 
@@ -279,6 +300,7 @@ class Util:
     
     def display_beneficiaries(self):
         m = folium.Map(**DEFAULT_MAP)
+        set_popup_background(m)
         s_iframe = folium.IFrame(f'{STYLE}'
                                  f'<h3>Vehicle Start</h3>{self.vehicle_start["name"]}<br/>'
                                  f'{self.vehicle_start["location"][0]} °N, '
@@ -316,17 +338,34 @@ class Util:
             return
         optimized = client.optimization(jobs=jobs, vehicles=vehicles, geometry=True)
         
+        m = folium.Map(**DEFAULT_MAP)
+        set_popup_background(m)
+        
         if len(optimized['unassigned']) > 0:
             print(red(f'Insufficient time or vehicles. '
                       f'{len(optimized["unassigned"])} unserved beneficiaries.'))
         for una in optimized['unassigned']:
             row = df.loc[una['id']]
-            print(f'{row[self.nam_c]} at {row[self.adr_c]}')
+            name = row[self.nam_c]
+            addr = row[self.adr_c]
+            lat = row[self.lat_c]
+            lon = row[self.lon_c]
+            print(f'{name} at {addr}')
+            
+            iframe = folium.IFrame(f'{STYLE}'
+                                   f'<h3>{name}</h3>{addr}',
+                                   width=WIDTH,
+                                   height=100)
+            popup = folium.Popup(iframe, max_width=1000)
+            folium.Marker(location=[lat, lon],
+                            popup=popup,
+                            icon=folium.Icon(color='red',
+                                             icon='remove')).add_to(m)
+            
         if len(optimized['unassigned']) > 0:
             print('\n')
         
         colors = rainbow(self.num_vehicles)
-        m = folium.Map(**DEFAULT_MAP)
         for i,route in enumerate(optimized['routes']):
             folium.PolyLine(locations=[
                 list(reversed(coord)) for coord in
@@ -391,7 +430,9 @@ class Util:
                 popup = folium.Popup(iframe, max_width=1000)
                 folium.Marker(location=[lat, lon],
                               popup=popup,
-                              icon=folium.Icon(color='black', icon_color=colors[i])).add_to(m)
+                              icon=folium.Icon(color='black',
+                                               icon='map-marker',
+                                               icon_color=colors[i])).add_to(m)
                 s_iframe = folium.IFrame(f'{STYLE}'
                                          f'<h3>Vehicle Start</h3>{self.vehicle_start["name"]}<br/>'
                                          f'{self.vehicle_start["location"][0]} °N, '
@@ -486,6 +527,24 @@ def hrs_mins_from_secs(secs):
         time += f'{mins} min'
         time = f'{time}s ' if mins > 1 else f'{time} '
     return time
+
+
+def set_popup_background(m, color='#303030'):
+    html_to_insert = ("<style>"
+                      ".leaflet-popup-content-wrapper, "
+                      ".leaflet-popup-tip {background-color: "
+                      f'{color}'
+                      " !important; } "
+                      ".leaflet-control-zoom-in, .leaflet-control-zoom-out "
+                      " { background-color: "
+                      f'{color}'
+                      " !important; "
+                      " color: #DDDDDD !important; "
+                      " border-radius: 0px; } "
+                      ".leaflet-control-attribution:hover {"
+	                  " text-decoration: none !important; }"
+                      "</style>")
+    m.get_root().header.add_child(folium.Element(html_to_insert))
 
 
 def nominatim_extract_query(query):
